@@ -490,6 +490,7 @@ async function loadBookings(){
 async function saveBooking(b){
   const payload = {
     officeId: b.office, room: b.room, mode: b.mode,
+    customerOrgNo: $('#f-orgno').value.trim(),
     startDate: b.date, endDate: b.endDate || b.date, hour: b.hour, months: b.months,
     qty: b.qty, label: b.label, amountNok: b.total,
     customerName: b.name, customerCompany: b.company, customerEmail: b.email, customerPhone: b.phone,
