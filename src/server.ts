@@ -18,10 +18,9 @@ type Booking = {
   id: string;
   office_id: string;
   room: string;
-  mode: 'hour' | 'day' | 'month';
+  mode: 'day' | 'week' | 'month';
   start_date: string;
   end_date: string | null;
-  hour: number | null;
   months: number;
   status: string;
 };
@@ -46,7 +45,6 @@ function frontendBooking(row: any) {
     mode: row.mode,
     date: row.start_date,
     endDate: row.end_date,
-    hour: row.hour,
     months: row.months,
     qty: row.qty,
     label: row.label,
@@ -63,7 +61,7 @@ function frontendBooking(row: any) {
   };
 }
 
-function conflicts(candidate: { officeId: string; mode: string; startDate: string; endDate: string; hour?: number | null }, existing: Booking[]) {
+function conflicts(candidate: { officeId: string; mode: string; startDate: string; endDate: string }, existing: Booking[]) {
   const cStart = new Date(`${candidate.startDate}T00:00:00Z`).getTime();
   const cEnd = new Date(`${candidate.endDate}T00:00:00Z`).getTime();
   for (const b of existing) {
@@ -71,24 +69,19 @@ function conflicts(candidate: { officeId: string; mode: string; startDate: strin
     const bStart = new Date(`${b.start_date}T00:00:00Z`).getTime();
     const bEnd = new Date(`${b.end_date ?? b.start_date}T00:00:00Z`).getTime();
     const dateOverlap = cStart <= bEnd && bStart <= cEnd;
-    if (!dateOverlap) continue;
-    if (candidate.mode === 'hour' && b.mode === 'hour') {
-      if (candidate.startDate === b.start_date && candidate.hour === b.hour) return true;
-    } else {
-      return true;
-    }
+    if (dateOverlap) return true;
   }
   return false;
 }
 
-async function assertAvailable(officeId: string, mode: string, startDate: string, endDate: string, hour?: number | null) {
+async function assertAvailable(officeId: string, mode: string, startDate: string, endDate: string) {
   const { data, error } = await supabase
     .from('bookings')
-    .select('id,office_id,room,mode,start_date,end_date,hour,months,status')
+    .select('id,office_id,room,mode,start_date,end_date,months,status')
     .eq('office_id', officeId)
     .in('status', ['pending_payment', 'pending_invoice', 'confirmed']);
   if (error) throw error;
-  return !conflicts({ officeId, mode, startDate, endDate, hour }, (data ?? []) as Booking[]);
+  return !conflicts({ officeId, mode, startDate, endDate }, (data ?? []) as Booking[]);
 }
 
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -161,15 +154,10 @@ app.delete('/api/bookings/:id', async (req, res) => {
 app.post('/api/create-checkout-session', async (req, res) => {
   const Body = z.object({
     officeId: z.enum(['a', 'b', 'c']),
-    room: z.string().min(1),
-    mode: z.enum(['hour', 'day', 'month']),
+    mode: z.enum(['day', 'week', 'month']),
     startDate: z.string().date(),
     endDate: z.string().date().nullable().optional(),
-    hour: z.number().int().min(0).max(23).nullable().optional(),
     months: z.number().int().min(1).max(24).default(1),
-    qty: z.number().int().min(1).max(366),
-    label: z.string().min(1),
-    amountNok: z.number().int().min(1),
     customerName: z.string().min(2),
     customerCompany: z.string().optional(),
     customerOrgNo: z.string().optional(),
@@ -182,28 +170,60 @@ app.post('/api/create-checkout-session', async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const b = parsed.data;
-  let endDate = b.endDate ?? b.startDate;
-  if (b.mode === 'month') endDate = addDays(b.startDate, b.months * 30 - 1);
-  if (b.mode === 'hour' && b.hour == null) return res.status(400).json({ error: 'Time må velges for timebooking' });
-  if (diffDaysInclusive(b.startDate, endDate) <= 0) return res.status(400).json({ error: 'Ugyldig bookingperiode' });
 
   try {
-    const available = await assertAvailable(b.officeId, b.mode, b.startDate, endDate, b.hour ?? null);
+    // Hent kontoret fra databasen – prisene her er fasiten (ikke det frontend sender)
+    const { data: office, error: officeError } = await supabase
+      .from('offices')
+      .select('*')
+      .eq('id', b.officeId)
+      .eq('active', true)
+      .single();
+    if (officeError || !office) return res.status(400).json({ error: 'Ukjent kontor' });
+
+    // Beregn periode og beløp på serveren
+    let endDate = b.startDate;
+    let qty = 1;
+    let unit = 0;
+    let label = '';
+
+    if (b.mode === 'day') {
+      endDate = b.endDate ?? b.startDate;
+      qty = diffDaysInclusive(b.startDate, endDate);
+      unit = office.price_day_nok;
+      label = `${qty} dag${qty > 1 ? 'er' : ''}`;
+    } else if (b.mode === 'week') {
+      endDate = addDays(b.startDate, 6); // alltid nøyaktig 7 dager
+      qty = 1;
+      unit = office.price_week_nok;
+      label = '1 uke';
+    } else { // month
+      endDate = addDays(b.startDate, b.months * 30 - 1);
+      qty = b.months;
+      unit = office.price_month_nok;
+      label = `${qty} måned${qty > 1 ? 'er' : ''}`;
+    }
+
+    if (diffDaysInclusive(b.startDate, endDate) <= 0) return res.status(400).json({ error: 'Ugyldig bookingperiode' });
+
+    const amountNok = unit * qty; // ingen mva
+    if (amountNok < 1) return res.status(400).json({ error: 'Ugyldig beløp' });
+
+    const available = await assertAvailable(b.officeId, b.mode, b.startDate, endDate);
     if (!available) return res.status(409).json({ error: 'Kontoret er ikke ledig i valgt periode' });
 
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
       .insert({
         office_id: b.officeId,
-        room: b.room,
+        room: office.room,
         mode: b.mode,
         start_date: b.startDate,
         end_date: endDate,
-        hour: b.hour ?? null,
-        months: b.months,
-        qty: b.qty,
-        label: b.label,
-        amount_nok: b.amountNok,
+        months: b.mode === 'month' ? b.months : 1,
+        qty,
+        label,
+        amount_nok: amountNok,
         customer_name: b.customerName,
         customer_company: b.customerCompany ?? null,
         customer_orgno: b.customerOrgNo ?? null,
@@ -227,10 +247,10 @@ app.post('/api/create-checkout-session', async (req, res) => {
         quantity: 1,
         price_data: {
           currency: config.CURRENCY,
-          unit_amount: b.amountNok * 100,
+          unit_amount: amountNok * 100,
           product_data: {
-            name: `${b.room} – ${b.label}`,
-            description: `${b.startDate}${b.mode === 'hour' ? ` kl. ${String(b.hour).padStart(2, '0')}:00` : ` til ${endDate}`}`,
+            name: `${office.room} – ${label}`,
+            description: `${b.startDate} til ${endDate}`,
           },
         },
       }],
