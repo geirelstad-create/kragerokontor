@@ -146,7 +146,7 @@ app.get('/api/bookings', async (_req, res) => {
     .from('bookings')
     .select('*')
     .in('status', ['pending_payment', 'pending_invoice', 'confirmed'])
-    .order('start_date', { ascending: true });
+        .order('start_date', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
   res.json((data ?? []).map(frontendBooking));
 });
@@ -173,7 +173,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
     customerCompany: z.string().optional(),
     customerEmail: z.string().email(),
     customerPhone: z.string().optional(),
-    paymentMethod: z.enum(['card', 'vipps', 'invoice']).default('card'),
+    paymentMethod: z.enum(['card']).default('card'),
     message: z.string().optional(),
   });
   const parsed = Body.safeParse(req.body);
@@ -208,16 +208,12 @@ app.post('/api/create-checkout-session', async (req, res) => {
         customer_phone: b.customerPhone ?? null,
         payment_method: b.paymentMethod,
         message: b.message ?? null,
-        status: b.paymentMethod === 'invoice' ? 'pending_invoice' : 'pending_payment',
+        status: 'pending_payment',
       })
       .select('*')
       .single();
 
     if (bookingError || !booking) return res.status(409).json({ error: bookingError?.message ?? 'Kunne ikke opprette booking' });
-
-    if (b.paymentMethod === 'invoice') {
-      return res.json({ bookingId: booking.id, invoice: true, booking: frontendBooking(booking) });
-    }
 
     const paymentMethodTypes = ['card'];
     const session = await stripe.checkout.sessions.create({
