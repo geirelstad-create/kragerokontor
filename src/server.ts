@@ -219,7 +219,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
       return res.json({ bookingId: booking.id, invoice: true, booking: frontendBooking(booking) });
     }
 
-    const paymentMethodTypes = b.paymentMethod === 'vipps' ? ['card'] : ['card'];
+    const paymentMethodTypes = ['card'];
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       customer_email: b.customerEmail,
