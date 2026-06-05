@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { supabase } from './supabase.js';
 import { stripe } from './stripe.js';
+import { sendBookingConfirmation } from './mailer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,7 +102,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
     const session = event.data.object;
     const bookingId = session.metadata?.bookingId;
     if (bookingId) {
-      await supabase
+      const { data: updatedBooking, error: updateError } = await supabase
         .from('bookings')
         .update({
           status: 'confirmed',
@@ -109,7 +110,19 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
           confirmed_at: new Date().toISOString(),
         })
         .eq('id', bookingId)
-        .eq('status', 'pending_payment');
+        .eq('status', 'pending_payment')
+        .select('*')
+        .single();
+
+      if (updateError) {
+        console.error('Kunne ikke oppdatere booking etter Stripe-betaling:', updateError.message);
+      } else if (updatedBooking) {
+        try {
+          await sendBookingConfirmation(updatedBooking as any);
+        } catch (mailError) {
+          console.error('Kunne ikke sende bookingbekreftelse:', mailError);
+        }
+      }
     }
   }
 

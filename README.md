@@ -66,3 +66,22 @@ Backend serverer `public/index.html`, så frontend og API kjører på samme orig
 ## Merk om Vipps
 
 Knappen/valget `Vipps` finnes i frontenden. Stripe Checkout støtter tilgjengelige betalingsmetoder basert på Stripe-kontoen din. I denne starteren rutes Vipps-valget til Stripe Checkout med kort som fallback. For ekte Vipps må enten Vipps aktiveres via betalingsleverandøren din, eller det må lages egen Vipps eCom-integrasjon.
+
+
+## E-post via Domeneshop SMTP
+
+Legg disse miljøvariablene inn i Render:
+
+```env
+SMTP_HOST=smtp.domeneshop.no
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=post@kragerokontor.no
+SMTP_PASS=passordet-til-epostkontoen
+MAIL_FROM=Kragerø Kontor <post@kragerokontor.no>
+MAIL_ADMIN=post@kragerokontor.no
+```
+
+E-post sendes etter at Stripe webhooken `checkout.session.completed` har bekreftet betaling og bookingen er satt til `confirmed`.
+
+Hvis e-post feiler, blir bookingen likevel bekreftet. Feilen logges i Render Logs.
