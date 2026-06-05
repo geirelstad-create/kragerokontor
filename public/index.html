@@ -449,7 +449,7 @@ const OFFICES = [
   { id:'b', room:'Kontor B', meta:'Midtkontor · 1–2 personer · 12 m²', img:OFFICE_IMG,
     price:{ day:490, week:2500, month:6500 } },
   { id:'c', room:'Kontor C', meta:'Lite kontor · 1 person', img:OFFICE_IMG,
-    price:{ day:490, week:2500, month:6500 } },
+    price:{ day:390, week:1900, month:4900 } },
 ];
 
 const MODES = [
@@ -498,10 +498,9 @@ async function loadBookings(){
 
 async function saveBooking(b){
   const payload = {
-    officeId: b.office, room: b.room, mode: b.mode,
+    officeId: b.office, mode: b.mode,
     customerOrgNo: $('#f-orgno').value.trim(),
-    startDate: b.date, endDate: b.endDate || b.date, hour: b.hour, months: b.months,
-    qty: b.qty, label: b.label, amountNok: b.total,
+    startDate: b.date, endDate: b.endDate || b.date, months: b.months,
     customerName: b.name, customerCompany: b.company, customerEmail: b.email, customerPhone: b.phone,
     paymentMethod: b.pay, message: b.msg
   };
@@ -552,29 +551,22 @@ function renderModes(){
 // ---------- Time panel ----------
 function setupTimePanel(){
   $('#mCount').value = 1;
-  if(S.mode==='hour'){ $('#time-title').textContent='Velg dag og time';
-    $('#time-sub').textContent='Coworking bookes time for time.'; $('#hours-wrap').style.display='none'; $('#months-wrap').style.display='none'; }
-  else if(S.mode==='day'){ $('#time-title').textContent='Velg periode';
+  if(S.mode==='day'){ $('#time-title').textContent='Velg periode';
     $('#time-sub').textContent='Trykk startdag, deretter sluttdag for flere dager.'; $('#hours-wrap').style.display='none'; $('#months-wrap').style.display='none'; }
+  else if(S.mode==='week'){ $('#time-title').textContent='Velg startdag';
+    $('#time-sub').textContent='Uke = 7 dager fra valgt startdag.'; $('#hours-wrap').style.display='none'; $('#months-wrap').style.display='none'; }
   else { $('#time-title').textContent='Velg startmåned';
     $('#time-sub').textContent='Langtidsleie starter på valgt dato.'; $('#hours-wrap').style.display='none'; $('#months-wrap').style.display='none'; }
   renderCalendar();
 }
 
 function bookedSet(){
-  // dates fully blocked for the selected office (day & month bookings)
+  // dates fully blocked for the selected office (all bookings are date ranges)
   const set = new Set();
   bookings.filter(b=>b.office===S.office).forEach(b=>{
-    if(b.mode==='day'||b.mode==='month'){
-      let d=new Date(b.date), end=new Date(b.endDate||b.date);
-      for(let x=new Date(d); x<=end; x.setDate(x.getDate()+1)) set.add(iso(x));
-    }
+    let d=new Date(b.date), end=new Date(b.endDate||b.date);
+    for(let x=new Date(d); x<=end; x.setDate(x.getDate()+1)) set.add(iso(x));
   });
-  return set;
-}
-function bookedHours(dateStr){
-  const set=new Set();
-  bookings.filter(b=>b.office===S.office && b.mode==='hour' && b.date===dateStr).forEach(b=>set.add(b.hour));
   return set;
 }
 
@@ -596,6 +588,8 @@ function renderCalendar(){
     else {
       if(S.date===ds) cls+=' sel';
       if(S.mode==='day' && S.date && S.endDate && ds>S.date && ds<=S.endDate) cls+=' inrange';
+      if(S.mode==='week' && S.date){ const a=new Date(S.date), x=new Date(ds), e=new Date(S.date); e.setDate(e.getDate()+6);
+        if(x>a && x<=e) cls+=' inrange'; }
     }
     html+=`<div class="${cls}" ${click?`data-d="${ds}"`:''}>${d}</div>`;
   }
@@ -610,28 +604,17 @@ function onPickDate(ds){
     if(!S.date || S.endDate || ds<S.date){ S.date=ds; S.endDate=null; }
     else { S.endDate=ds; }
   } else {
+    // week & month: pick start date only
     S.date=ds; S.endDate=null;
-    if(S.mode==='hour'){ S.hour=null; renderHours(ds); $('#hours-wrap').style.display='block'; }
     if(S.mode==='month'){ $('#months-wrap').style.display='block'; }
   }
   renderCalendar(); renderSummary(); maybeShowDetails();
 }
 
-function renderHours(ds){
-  const taken=bookedHours(ds);
-  $('#hours').innerHTML=HOURS.map(h=>{
-    const dis=taken.has(h);
-    return `<div class="hour ${dis?'disabled':''} ${S.hour===h?'sel':''}" ${dis?'':`data-h="${h}"`}>${String(h).padStart(2,'0')}:00</div>`;
-  }).join('');
-  document.querySelectorAll('.hour[data-h]').forEach(el=>{
-    el.onclick=()=>{ S.hour=+el.dataset.h; renderHours(ds); renderSummary(); maybeShowDetails(); };
-  });
-}
-
 function maybeShowDetails(){
   let ready=false;
-  if(S.mode==='hour') ready = S.date && S.hour!=null;
   if(S.mode==='day') ready = !!S.date;
+  if(S.mode==='week') ready = !!S.date;
   if(S.mode==='month') ready = !!S.date;
   if(ready){ $('#panel-4').style.display='block'; updateSteps(4); }
 }
@@ -641,15 +624,14 @@ function calc(){
   if(!S.office||!S.mode) return null;
   const o=OFFICES.find(x=>x.id===S.office);
   let qty=1, unit=o.price[S.mode], label='';
-  if(S.mode==='hour'){ qty=1; label='1 time'; }
   if(S.mode==='day'){
     if(S.date){ const a=new Date(S.date), b=new Date(S.endDate||S.date);
       qty=Math.round((b-a)/86400000)+1; } label=`${qty} dag${qty>1?'er':''}`;
   }
+  if(S.mode==='week'){ qty=1; label='1 uke'; }
   if(S.mode==='month'){ qty=S.months; label=`${qty} måned${qty>1?'er':''}`; }
-  const sub=unit*qty;
-  const mva=Math.round(sub*0.25);
-  return { o, unit, qty, label, sub, mva, tot:sub+mva };
+  const tot=unit*qty;
+  return { o, unit, qty, label, tot };
 }
 
 function renderSummary(){
@@ -657,16 +639,14 @@ function renderSummary(){
   if(!c){ $('#sum-body').innerHTML='<div class="empty-sum">Velg et kontor for å starte bookingen.</div>'; setBtn(); return; }
   const m=MODES.find(x=>x.id===S.mode);
   let when='—';
-  if(S.mode==='hour' && S.date) when = `${prettyDate(S.date)}${S.hour!=null?` · ${String(S.hour).padStart(2,'0')}:00`:''}`;
   if(S.mode==='day' && S.date) when = S.endDate?`${prettyDate(S.date)} – ${prettyDate(S.endDate)}`:prettyDate(S.date);
+  if(S.mode==='week' && S.date){ const e=new Date(S.date); e.setDate(e.getDate()+6); when = `${prettyDate(S.date)} – ${prettyDate(iso(e))}`; }
   if(S.mode==='month' && S.date) when = `Fra ${prettyDate(S.date)}`;
   $('#sum-body').innerHTML=`
     <div class="sum-line"><span>Kontor</span><span>${c.o.room.split('—')[0].trim()}</span></div>
     <div class="sum-line"><span>Leieform</span><span>${m?m.ttl:''}</span></div>
     <div class="sum-line"><span>Tidspunkt</span><span style="text-align:right">${when}</span></div>
     <div class="sum-line"><span>Pris</span><span>${fmt(c.unit)} ${m.unit} × ${c.label}</span></div>
-    <div class="sum-line"><span>Sum eks. mva</span><span>${fmt(c.sub)} kr</span></div>
-    <div class="sum-line"><span>Mva (25%)</span><span>${fmt(c.mva)} kr</span></div>
     <div class="sum-line tot"><span>Totalt</span><b>${fmt(c.tot)} kr</b></div>`;
   setBtn();
 }
@@ -675,8 +655,8 @@ function setBtn(){
   const b=$('#confirmBtn');
   const detailsVisible = $('#panel-4').style.display!=='none';
   let ready=false;
-  if(S.mode==='hour') ready=S.date&&S.hour!=null;
   if(S.mode==='day') ready=!!S.date;
+  if(S.mode==='week') ready=!!S.date;
   if(S.mode==='month') ready=!!S.date;
   if(detailsVisible && ready){ b.disabled=false; b.textContent='Gå til betaling'; }
   else if(ready){ b.disabled=false; b.textContent='Bekreft og betal'; }
@@ -734,8 +714,8 @@ function renderMyBookings(){
   if(!bookings.length){ el.innerHTML='<div class="loading">Ingen bookinger ennå.</div>'; return; }
   el.innerHTML=bookings.map(b=>{
     let when=prettyDate(b.date);
-    if(b.mode==='hour'&&b.hour!=null) when+=` · ${String(b.hour).padStart(2,'0')}:00`;
     if(b.mode==='day'&&b.endDate) when=`${prettyDate(b.date)} – ${prettyDate(b.endDate)}`;
+    if(b.mode==='week') when=`${prettyDate(b.date)} – ${prettyDate(b.endDate||b.date)} · 1 uke`;
     if(b.mode==='month') when=`Fra ${prettyDate(b.date)} · ${b.months} mnd`;
     return `<div class="bk">
       <div>
