@@ -21,6 +21,8 @@ export const config = {
   VIPPS_SUBSCRIPTION_KEY: process.env.VIPPS_SUBSCRIPTION_KEY,
   VIPPS_MSN: process.env.VIPPS_MSN,
   VIPPS_WEBHOOK_SECRET: process.env.VIPPS_WEBHOOK_SECRET,
+  // Admin
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
   SMTP_HOST: process.env.SMTP_HOST,
   SMTP_PORT: Number(process.env.SMTP_PORT ?? 587),
   SMTP_SECURE: process.env.SMTP_SECURE === 'true',

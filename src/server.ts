@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { config } from './config.js';
 import { supabase } from './supabase.js';
@@ -38,7 +39,22 @@ function diffDaysInclusive(startDate: string, endDate: string) {
   return Math.round((end - start) / 86400000) + 1;
 }
 
-function frontendBooking(row: any) {
+// Offentlig: kun det kalenderen trenger. INGEN persondata.
+function publicBooking(row: any) {
+  return {
+    id: row.id,
+    office: row.office_id,
+    room: row.room,
+    mode: row.mode,
+    date: row.start_date,
+    endDate: row.end_date,
+    months: row.months,
+    status: row.status,
+  };
+}
+
+// Admin: full info (kun bak innlogging).
+function adminBooking(row: any) {
   return {
     id: row.id,
     office: row.office_id,
@@ -58,6 +74,7 @@ function frontendBooking(row: any) {
     pay: row.payment_method,
     msg: row.message,
     status: row.status,
+    receiptNo: row.receipt_no,
     created: row.created_at,
   };
 }
@@ -177,16 +194,42 @@ app.get('/api/offices', async (_req, res) => {
 });
 
 app.get('/api/bookings', async (_req, res) => {
+  // Offentlig endepunkt – brukes til å tegne kalenderen. Returnerer KUN
+  // kontor/dato/status, ingen persondata.
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('id,office_id,room,mode,start_date,end_date,months,status')
+    .in('status', ['pending_payment', 'pending_invoice', 'confirmed'])
+        .order('start_date', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json((data ?? []).map(publicBooking));
+});
+
+// ---- Admin-autentisering (passord fra miljøvariabel) ----
+function adminAuthorized(req: express.Request): boolean {
+  const expected = config.ADMIN_PASSWORD;
+  if (!expected) return false; // ingen passord satt = admin avslått
+  const header = req.header('x-admin-password') || '';
+  // konstant-tid-sammenligning
+  const a = Buffer.from(header);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  try { return timingSafeEqual(a, b); } catch { return false; }
+}
+
+app.get('/api/admin/bookings', async (req, res) => {
+  if (!adminAuthorized(req)) return res.status(401).json({ error: 'Ikke autorisert' });
   const { data, error } = await supabase
     .from('bookings')
     .select('*')
     .in('status', ['pending_payment', 'pending_invoice', 'confirmed'])
-        .order('start_date', { ascending: true });
+    .order('start_date', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
-  res.json((data ?? []).map(frontendBooking));
+  res.json((data ?? []).map(adminBooking));
 });
 
 app.delete('/api/bookings/:id', async (req, res) => {
+  if (!adminAuthorized(req)) return res.status(401).json({ error: 'Ikke autorisert' });
   const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
