@@ -383,14 +383,6 @@
           <div class="field"><label>Mobilnummer</label><input id="f-phone" placeholder="+47 000 00 000"></div>
         </div>
         <div class="field"><label>Melding (valgfritt)</label><textarea id="f-msg" rows="2" placeholder="Spesielle behov, antall personer, e.l."></textarea></div>
-        <div class="field">
-          <label>Betalingsmåte</label>
-          <div class="pay-select" id="pay-select">
-            <button type="button" class="pay-opt sel" data-pay="card">Kort</button>
-            <button type="button" class="pay-opt pay-opt-vipps" data-pay="vipps">Vipps</button>
-          </div>
-        </div>
-        <input id="f-pay" type="hidden" value="card">
       </div>
     </div>
 
@@ -401,14 +393,21 @@
         <div id="sum-body">
           <div class="empty-sum">Velg et kontor for å starte bookingen.</div>
         </div>
+
+        <div class="field" style="margin-top:6px;">
+          <label>Betalingsmåte</label>
+          <div class="pay-select" id="pay-select">
+            <button type="button" class="pay-opt sel" data-pay="card">Kortbetaling</button>
+            <button type="button" class="pay-opt pay-opt-vipps" data-pay="vipps">Vipps</button>
+          </div>
+        </div>
+        <input id="f-pay" type="hidden" value="card">
+
         <button class="btn" id="confirmBtn" disabled>Fortsett</button>
 
-        <div class="pay-logos">
-          <span class="pay-chip">VISA</span>
-          <span class="pay-chip">Mastercard</span>
-          </div>
         <div class="pay-note">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>Du sendes til sikker betaling. Kvittering kommer på e-post.</span>
           </div>
       </div>
 
