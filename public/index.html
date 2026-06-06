@@ -265,6 +265,13 @@
   .navlink.active { background: var(--moss); color: #fff; border-color: var(--moss); }
   .topnav .nav-mini { margin-left: 10px; }
   @media (max-width: 560px){ .topnav .nav-mini { display: none; } }
+  @media (max-width: 480px){
+    .topbar { flex-wrap: wrap; gap: 10px; padding: 12px 0; }
+    .brand { gap: 10px; }
+    .logo-img { height: 32px; }
+    .topnav { gap: 6px; }
+    .navlink { padding: 6px 12px; font-size: 13px; }
+  }
   .gallery-intro { padding: 40px 0 22px; max-width: 60ch; }
   .gallery-intro h1 { font-family: 'Fraunces', serif; font-size: clamp(30px, 5vw, 52px); line-height: 1.05; margin: 10px 0 0; font-weight: 600; }
   .gallery-intro h1 em { font-style: italic; color: var(--moss); }
@@ -418,7 +425,7 @@
           </div>
       </div>
 
-      <div class="panel" style="margin-top:20px;" id="admin-panel">
+      <div class="panel" style="margin-top:20px; display:none;" id="admin-panel">
         <div class="section-label">Administrasjon</div>
         <div id="admin-login">
           <div class="field"><label>Admin-passord</label><input id="admin-pass" type="password" placeholder="••••••••"></div>
@@ -845,6 +852,25 @@ const params = new URLSearchParams(window.location.search);
 if(params.get('booking')==='success') toast('Betaling mottatt! Bookingen er bekreftet.');
 if(params.get('booking')==='cancelled') toast('Betaling ble avbrutt. Bookingen står som reservert i kort tid.');
 if(params.get('booking')==='vipps-return') toast('Takk! Når Vipps har bekreftet betalingen sendes kvittering på e-post.');
+
+// Admin-panelet er skjult som standard. Vis det kun når URL-en har #admin
+// (f.eks. kragerokontor.no/#admin). Lag gjerne et bokmerke til den adressen.
+function syncAdminVisibility(){
+  const show = (window.location.hash || '').toLowerCase() === '#admin';
+  const panel = document.getElementById('admin-panel');
+  if(panel) panel.style.display = show ? 'block' : 'none';
+  if(show){
+    // sørg for at vi er i booking-visningen så panelet er synlig
+    document.querySelectorAll('.navlink').forEach(x=>x.classList.remove('active'));
+    const bookBtn = document.querySelector('.navlink[data-view="book"]');
+    if(bookBtn) bookBtn.classList.add('active');
+    const vb=document.getElementById('view-book'), vg=document.getElementById('view-gallery');
+    if(vb) vb.style.display=''; if(vg) vg.style.display='none';
+    if(panel) panel.scrollIntoView({behavior:'smooth'});
+  }
+}
+window.addEventListener('hashchange', syncAdminVisibility);
+syncAdminVisibility();
 
 renderOffices(); renderSummary(); loadBookings();
 </script>
