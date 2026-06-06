@@ -14,6 +14,13 @@ export const config = {
   SUPABASE_SERVICE_ROLE_KEY: required('SUPABASE_SERVICE_ROLE_KEY'),
   STRIPE_SECRET_KEY: required('STRIPE_SECRET_KEY'),
   STRIPE_WEBHOOK_SECRET: required('STRIPE_WEBHOOK_SECRET'),
+  // Vipps ePayment
+  VIPPS_BASE_URL: process.env.VIPPS_BASE_URL ?? 'https://apitest.vipps.no',
+  VIPPS_CLIENT_ID: process.env.VIPPS_CLIENT_ID,
+  VIPPS_CLIENT_SECRET: process.env.VIPPS_CLIENT_SECRET,
+  VIPPS_SUBSCRIPTION_KEY: process.env.VIPPS_SUBSCRIPTION_KEY,
+  VIPPS_MSN: process.env.VIPPS_MSN,
+  VIPPS_WEBHOOK_SECRET: process.env.VIPPS_WEBHOOK_SECRET,
   SMTP_HOST: process.env.SMTP_HOST,
   SMTP_PORT: Number(process.env.SMTP_PORT ?? 587),
   SMTP_SECURE: process.env.SMTP_SECURE === 'true',

@@ -8,6 +8,7 @@ import { config } from './config.js';
 import { supabase } from './supabase.js';
 import { stripe } from './stripe.js';
 import { sendBookingConfirmation } from './mailer.js';
+import { vippsConfigured, createVippsPayment, getVippsPayment, captureVippsPayment } from './vipps.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,6 +85,50 @@ async function assertAvailable(officeId: string, mode: string, startDate: string
   return !conflicts({ officeId, mode, startDate, endDate }, (data ?? []) as Booking[]);
 }
 
+// Felles prisberegning på serveren (fasiten – ikke det frontend sender)
+async function computeBooking(officeId: string, mode: string, startDate: string, endDateIn: string | null | undefined, months: number) {
+  const { data: office, error: officeError } = await supabase
+    .from('offices').select('*').eq('id', officeId).eq('active', true).single();
+  if (officeError || !office) throw new Error('Ukjent kontor');
+
+  let endDate = startDate;
+  let qty = 1;
+  let unit = 0;
+  let label = '';
+  if (mode === 'day') {
+    endDate = endDateIn ?? startDate;
+    qty = diffDaysInclusive(startDate, endDate);
+    unit = office.price_day_nok; label = `${qty} dag${qty > 1 ? 'er' : ''}`;
+  } else if (mode === 'week') {
+    endDate = addDays(startDate, 6); qty = 1;
+    unit = office.price_week_nok; label = '1 uke';
+  } else {
+    endDate = addDays(startDate, months * 30 - 1); qty = months;
+    unit = office.price_month_nok; label = `${qty} måned${qty > 1 ? 'er' : ''}`;
+  }
+  const amountNok = unit * qty;
+  return { office, endDate, qty, unit, label, amountNok };
+}
+
+// Felles "fullfør booking": tildel kvitteringsnummer + send bekreftelse/kvittering.
+// Idempotent fordi assign_receipt ikke gir nytt nummer hvis det allerede finnes.
+async function finalizeConfirmedBooking(bookingId: string, confirmedRow: any) {
+  let bookingForMail: any = confirmedRow;
+  try {
+    const { data: rec, error: recError } = await supabase
+      .rpc('assign_receipt', { p_booking_id: bookingId }).single();
+    if (recError) console.error('Kunne ikke tildele kvitteringsnummer:', recError.message);
+    else if (rec) bookingForMail = { ...confirmedRow, receipt_no: (rec as any).receipt_no, receipt_date: (rec as any).receipt_date };
+  } catch (recErr) {
+    console.error('Feil ved tildeling av kvitteringsnummer:', recErr);
+  }
+  try {
+    await sendBookingConfirmation(bookingForMail);
+  } catch (mailError) {
+    console.error('Kunne ikke sende bookingbekreftelse:', mailError);
+  }
+}
+
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   let event;
   try {
@@ -111,11 +156,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
       if (updateError) {
         console.error('Kunne ikke oppdatere booking etter Stripe-betaling:', updateError.message);
       } else if (updatedBooking) {
-        try {
-          await sendBookingConfirmation(updatedBooking as any);
-        } catch (mailError) {
-          console.error('Kunne ikke sende bookingbekreftelse:', mailError);
-        }
+        await finalizeConfirmedBooking(bookingId, updatedBooking);
       }
     }
   }
@@ -162,7 +203,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
     customerCompany: z.string().optional(),
     customerOrgNo: z.string().optional(),
     customerEmail: z.string().email(),
-    customerPhone: z.string().optional(),
+    customerPhone: z.string().min(8),
     paymentMethod: z.enum(['card']).default('card'),
     message: z.string().optional(),
   });
@@ -172,41 +213,8 @@ app.post('/api/create-checkout-session', async (req, res) => {
   const b = parsed.data;
 
   try {
-    // Hent kontoret fra databasen – prisene her er fasiten (ikke det frontend sender)
-    const { data: office, error: officeError } = await supabase
-      .from('offices')
-      .select('*')
-      .eq('id', b.officeId)
-      .eq('active', true)
-      .single();
-    if (officeError || !office) return res.status(400).json({ error: 'Ukjent kontor' });
-
-    // Beregn periode og beløp på serveren
-    let endDate = b.startDate;
-    let qty = 1;
-    let unit = 0;
-    let label = '';
-
-    if (b.mode === 'day') {
-      endDate = b.endDate ?? b.startDate;
-      qty = diffDaysInclusive(b.startDate, endDate);
-      unit = office.price_day_nok;
-      label = `${qty} dag${qty > 1 ? 'er' : ''}`;
-    } else if (b.mode === 'week') {
-      endDate = addDays(b.startDate, 6); // alltid nøyaktig 7 dager
-      qty = 1;
-      unit = office.price_week_nok;
-      label = '1 uke';
-    } else { // month
-      endDate = addDays(b.startDate, b.months * 30 - 1);
-      qty = b.months;
-      unit = office.price_month_nok;
-      label = `${qty} måned${qty > 1 ? 'er' : ''}`;
-    }
-
+    const { office, endDate, qty, label, amountNok } = await computeBooking(b.officeId, b.mode, b.startDate, b.endDate, b.months);
     if (diffDaysInclusive(b.startDate, endDate) <= 0) return res.status(400).json({ error: 'Ugyldig bookingperiode' });
-
-    const amountNok = unit * qty; // ingen mva
     if (amountNok < 1) return res.status(400).json({ error: 'Ugyldig beløp' });
 
     const available = await assertAvailable(b.officeId, b.mode, b.startDate, endDate);
@@ -263,6 +271,125 @@ app.post('/api/create-checkout-session', async (req, res) => {
     res.json({ checkoutUrl: session.url, bookingId: booking.id });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+  }
+});
+
+// ---------- Vipps ePayment ----------
+app.post('/api/vipps/create', async (req, res) => {
+  if (!vippsConfigured()) return res.status(503).json({ error: 'Vipps er ikke konfigurert på serveren' });
+
+  const Body = z.object({
+    officeId: z.enum(['a', 'b', 'c']),
+    mode: z.enum(['day', 'week', 'month']),
+    startDate: z.string().date(),
+    endDate: z.string().date().nullable().optional(),
+    months: z.number().int().min(1).max(24).default(1),
+    customerName: z.string().min(2),
+    customerCompany: z.string().optional(),
+    customerOrgNo: z.string().optional(),
+    customerEmail: z.string().email(),
+    customerPhone: z.string().min(8), // påkrevd for Vipps
+    message: z.string().optional(),
+  });
+  const parsed = Body.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const b = parsed.data;
+
+  // Normaliser telefonnummer til MSISDN (4791234567)
+  let phone = b.customerPhone.replace(/\s|-/g, '');
+  if (phone.startsWith('+')) phone = phone.slice(1);
+  if (phone.length === 8) phone = '47' + phone; // norsk nummer uten landkode
+
+  try {
+    const { office, endDate, qty, label, amountNok } = await computeBooking(b.officeId, b.mode, b.startDate, b.endDate, b.months);
+    if (diffDaysInclusive(b.startDate, endDate) <= 0) return res.status(400).json({ error: 'Ugyldig bookingperiode' });
+    if (amountNok < 1) return res.status(400).json({ error: 'Ugyldig beløp' });
+
+    const available = await assertAvailable(b.officeId, b.mode, b.startDate, endDate);
+    if (!available) return res.status(409).json({ error: 'Kontoret er ikke ledig i valgt periode' });
+
+    const { data: booking, error: bookingError } = await supabase
+      .from('bookings')
+      .insert({
+        office_id: b.officeId, room: office.room, mode: b.mode,
+        start_date: b.startDate, end_date: endDate,
+        months: b.mode === 'month' ? b.months : 1, qty, label, amount_nok: amountNok,
+        customer_name: b.customerName, customer_company: b.customerCompany ?? null,
+        customer_orgno: b.customerOrgNo ?? null, customer_email: b.customerEmail,
+        customer_phone: b.customerPhone ?? null, payment_method: 'vipps',
+        message: b.message ?? null, status: 'pending_payment',
+      })
+      .select('*').single();
+    if (bookingError || !booking) return res.status(409).json({ error: bookingError?.message ?? 'Kunne ikke opprette booking' });
+
+    const returnUrl = `${config.FRONTEND_URL}/?booking=vipps-return&bookingId=${booking.id}`;
+    const { redirectUrl } = await createVippsPayment({
+      reference: booking.id,
+      amountNok,
+      phoneNumber: phone,
+      description: `${office.room} – ${label}`,
+      returnUrl,
+    });
+
+    res.json({ checkoutUrl: redirectUrl, bookingId: booking.id });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+  }
+});
+
+// Vipps webhook: kalles av Vipps når betalingsstatus endres.
+async function handleVippsAuthorized(reference: string) {
+  // Verifiser status mot Vipps før vi bekrefter (ikke stol blindt på webhook-innhold)
+  const payment = await getVippsPayment(reference);
+  const state = payment?.state; // AUTHORIZED | ABORTED | EXPIRED ...
+  if (state !== 'AUTHORIZED') return;
+
+  // Hent booking og beløp
+  const { data: booking } = await supabase.from('bookings').select('*').eq('id', reference).single();
+  if (!booking) return;
+
+  // Capture (trekk hele beløpet) – idempotent nok via try/catch; Vipps tåler gjentatt capture-forsøk dårlig,
+  // så vi capture-r kun hvis booking ikke allerede er bekreftet.
+  if (booking.status !== 'confirmed') {
+    try {
+      await captureVippsPayment(reference, booking.amount_nok);
+    } catch (capErr) {
+      console.error('Vipps capture feilet for', reference, capErr);
+      return; // ikke bekreft hvis vi ikke fikk trukket
+    }
+  }
+
+  const { data: updated, error: updErr } = await supabase
+    .from('bookings')
+    .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
+    .eq('id', reference)
+    .neq('status', 'confirmed')
+    .select('*').single();
+
+  if (updErr) {
+    // Hvis allerede bekreftet (ingen rad oppdatert) er det greit – unngå dobbel kvittering
+    return;
+  }
+  if (updated) {
+    await finalizeConfirmedBooking(reference, updated);
+  }
+}
+
+app.post('/api/vipps/webhook', async (req, res) => {
+  // Svar raskt 200 så Vipps ikke re-sender; behandle deretter.
+  res.json({ received: true });
+  try {
+    const reference = req.body?.reference || req.body?.orderId;
+    const name = (req.body?.name || '').toString().toUpperCase();
+    // Vi reagerer på autorisert/captured-hendelser
+    if (reference && (name.includes('AUTHORIZED') || name.includes('CAPTURED') || req.body?.success === true)) {
+      await handleVippsAuthorized(reference);
+    } else if (reference) {
+      // Som fallback: sjekk status uansett hendelsestype
+      await handleVippsAuthorized(reference);
+    }
+  } catch (err) {
+    console.error('Vipps webhook-feil:', err);
   }
 });
 
