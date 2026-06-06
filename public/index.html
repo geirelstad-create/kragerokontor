@@ -170,6 +170,15 @@
     border: 1px solid var(--line); background: var(--paper);
   }
   .pay-chip.vipps { background: #ff5b24; color: #fff; border-color: #ff5b24; }
+  .pay-select { display: flex; gap: 10px; margin-top: 6px; }
+  .pay-opt {
+    flex: 1; padding: 12px; border-radius: 10px; border: 1.5px solid var(--line);
+    background: var(--paper); color: var(--ink); font-family: 'Archivo'; font-weight: 700;
+    font-size: 14px; cursor: pointer; transition: .15s ease;
+  }
+  .pay-opt:hover { border-color: var(--moss); }
+  .pay-opt.sel { border-color: var(--moss); background: var(--moss); color: var(--paper); }
+  .pay-opt-vipps.sel { border-color: #ff5b24; background: #ff5b24; color: #fff; }
 
   .btn {
     width: 100%; margin-top: 18px; padding: 15px; border: none; border-radius: 12px;
@@ -371,9 +380,16 @@
        </div>
         <div class="row2">
           <div class="field"><label>E-post</label><input id="f-email" type="email" placeholder="ola@firma.no"></div>
-          <div class="field"><label>Telefon</label><input id="f-phone" placeholder="+47 000 00 000"></div>
+          <div class="field"><label>Mobilnummer</label><input id="f-phone" placeholder="+47 000 00 000"></div>
         </div>
         <div class="field"><label>Melding (valgfritt)</label><textarea id="f-msg" rows="2" placeholder="Spesielle behov, antall personer, e.l."></textarea></div>
+        <div class="field">
+          <label>Betalingsmåte</label>
+          <div class="pay-select" id="pay-select">
+            <button type="button" class="pay-opt sel" data-pay="card">Kort</button>
+            <button type="button" class="pay-opt pay-opt-vipps" data-pay="vipps">Vipps</button>
+          </div>
+        </div>
         <input id="f-pay" type="hidden" value="card">
       </div>
     </div>
@@ -504,7 +520,8 @@ async function saveBooking(b){
     customerName: b.name, customerCompany: b.company, customerEmail: b.email, customerPhone: b.phone,
     paymentMethod: b.pay, message: b.msg
   };
-  const data = await api('/api/create-checkout-session', { method:'POST', body: JSON.stringify(payload) });
+  const endpoint = b.pay === 'vipps' ? '/api/vipps/create' : '/api/create-checkout-session';
+  const data = await api(endpoint, { method:'POST', body: JSON.stringify(payload) });
   if(data.checkoutUrl){ window.location.href = data.checkoutUrl; return { redirect:true }; }
   return { ok:true, booking:data.booking };
 }
@@ -676,6 +693,11 @@ $('#confirmBtn').onclick = async ()=>{
   if($('#panel-4').style.display==='none'){ maybeShowDetails(); $('#panel-4').scrollIntoView({behavior:'smooth'}); return; }
   const name=$('#f-name').value.trim(), email=$('#f-email').value.trim();
   if(!name||!email){ toast('Fyll inn navn og e-post.'); $('#f-name').focus(); return; }
+  const pay=$('#f-pay').value;
+  const phone=$('#f-phone').value.trim();
+  if(phone.replace(/\s|-/g,'').replace(/^\+/,'').length<8){
+    toast('Fyll inn et gyldig mobilnummer.'); $('#f-phone').focus(); return;
+  }
   const c=calc();
   const b={ id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),
     office:S.office, room:c.o.room, mode:S.mode,
@@ -735,6 +757,18 @@ $('#nextM').onclick=()=>{ viewDate.setMonth(viewDate.getMonth()+1); renderCalend
 $('#mPlus').onclick=()=>{ S.months=Math.min(36,S.months+1); $('#mCount').value=S.months; renderSummary(); };
 $('#mMinus').onclick=()=>{ S.months=Math.max(1,S.months-1); $('#mCount').value=S.months; renderSummary(); };
 
+// ---------- Payment method selector ----------
+document.querySelectorAll('.pay-opt').forEach(el=>{
+  el.onclick=()=>{
+    document.querySelectorAll('.pay-opt').forEach(x=>x.classList.remove('sel'));
+    el.classList.add('sel');
+    $('#f-pay').value = el.dataset.pay;
+    const phoneField = $('#f-phone');
+    if(el.dataset.pay==='vipps'){ phoneField.setAttribute('placeholder','Mobilnummer (kreves for Vipps)'); }
+    else { phoneField.setAttribute('placeholder','+47 000 00 000'); }
+  };
+});
+
 // ---------- Toast ----------
 let toastT;
 function toast(msg){ const t=$('#toast'); t.innerHTML=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),5000); }
@@ -766,6 +800,7 @@ function toast(msg){ const t=$('#toast'); t.innerHTML=msg; t.classList.add('show
 const params = new URLSearchParams(window.location.search);
 if(params.get('booking')==='success') toast('Betaling mottatt! Bookingen er bekreftet.');
 if(params.get('booking')==='cancelled') toast('Betaling ble avbrutt. Bookingen står som reservert i kort tid.');
+if(params.get('booking')==='vipps-return') toast('Takk! Når Vipps har bekreftet betalingen sendes kvittering på e-post.');
 
 renderOffices(); renderSummary(); loadBookings();
 </script>
