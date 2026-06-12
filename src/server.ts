@@ -246,7 +246,7 @@ const AdminBookingBody = z.object({
   customerOrgNo: z.string().optional().nullable(),
   customerEmail: z.string().email(),
   customerPhone: z.string().optional().nullable(),
-  paymentMethod: z.enum(['card', 'vipps', 'invoice']).default('invoice'),
+  paymentMethod: z.enum(['card', 'vipps', 'none']).default('none'),
   message: z.string().optional().nullable(),
   status: z.enum(['pending_payment', 'pending_invoice', 'confirmed', 'cancelled', 'expired']).default('confirmed'),
 });
