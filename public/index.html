@@ -516,12 +516,24 @@ const API_BASE = window.QUAD_API_BASE || '';
 
 async function api(path, options={}){
   const res = await fetch(API_BASE + path, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers||{}) },
-    ...options
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers||{}) }
   });
   let data = null;
   try { data = await res.json(); } catch(e){}
-  if(!res.ok){ throw new Error((data && (data.error?.message || data.error)) || 'API-feil'); }
+  if(!res.ok){
+    let msg = 'API-feil';
+    const e = data && data.error;
+    if(typeof e === 'string') msg = e;
+    else if(e && e.message) msg = e.message;
+    else if(e && e.fieldErrors){
+      // Zod-valideringsfeil: vis hvilke felter som mangler/er feil
+      const fields = Object.entries(e.fieldErrors)
+        .map(([k,v])=>`${k}: ${(Array.isArray(v)?v.join(', '):v)}`).join(' · ');
+      msg = fields || (e.formErrors && e.formErrors.join(', ')) || 'Ugyldige felter';
+    }
+    throw new Error(msg);
+  }
   return data;
 }
 
