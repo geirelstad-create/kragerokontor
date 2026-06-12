@@ -437,7 +437,17 @@ app.post('/api/vipps/webhook', async (req, res) => {
 });
 
 app.use(express.static(publicDir));
-app.get('*', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+app.get('*', (req, res) => {
+  // Hvis forespørselen ser ut som en fil (har filendelse, f.eks. .html),
+  // forsøk å sende den faktiske filen før vi faller tilbake til index.html.
+  if (path.extname(req.path)) {
+    const filePath = path.join(publicDir, req.path);
+    return res.sendFile(filePath, (err) => {
+      if (err) res.sendFile(path.join(publicDir, 'index.html'));
+    });
+  }
+  res.sendFile(path.join(publicDir, 'index.html'));
+});
 
 app.listen(config.PORT, () => {
   console.log(`Quad booking kjører på ${config.FRONTEND_URL}`);
