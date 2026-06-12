@@ -204,6 +204,7 @@
   .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
   .cal-head .mname { font-family: 'Fraunces', serif; font-size: 18px; font-weight: 600; text-transform: capitalize; }
   .cal-nav { display: flex; gap: 6px; }
+  .admin-tabs { display: flex; gap: 8px; }
   .cal-nav button { width: 34px; height: 34px; border: 1px solid var(--line); background: var(--paper); border-radius: 8px; cursor: pointer; font-size: 16px; }
   .cal-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 5px; }
   .cal-dow { text-align: center; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; padding-bottom: 4px; }
@@ -448,7 +449,7 @@
         <div id="admin-content" style="display:none;">
           <button class="btn" id="admin-new-btn" style="margin-bottom:14px;">+ Ny booking</button>
           <div id="admin-form-wrap" style="display:none;"></div>
-          <div class="cal-nav" style="margin-bottom:14px;">
+          <div class="admin-tabs" style="margin-bottom:14px;">
             <button class="navlink active" id="admin-tab-list" data-tab="list">Liste</button>
             <button class="navlink" id="admin-tab-cal" data-tab="cal">Kalender</button>
           </div>
@@ -1067,9 +1068,9 @@ function toast(msg){ const t=$('#toast'); t.innerHTML=msg; t.classList.add('show
   for (const id in imgs){ const el = document.getElementById(id); if(el) el.src = imgs[id]; }
   const viewBook = document.getElementById('view-book');
   const viewGal  = document.getElementById('view-gallery');
-  document.querySelectorAll('.navlink').forEach(function(b){
+  document.querySelectorAll('.navlink[data-view]').forEach(function(b){
     b.onclick = function(){
-      document.querySelectorAll('.navlink').forEach(function(x){ x.classList.remove('active'); });
+      document.querySelectorAll('.navlink[data-view]').forEach(function(x){ x.classList.remove('active'); });
       b.classList.add('active');
       const g = b.dataset.view === 'gallery';
       viewBook.style.display = g ? 'none' : '';
@@ -1092,7 +1093,7 @@ function syncAdminVisibility(){
   if(panel) panel.style.display = show ? 'block' : 'none';
   if(show){
     // sørg for at vi er i booking-visningen så panelet er synlig
-    document.querySelectorAll('.navlink').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.navlink[data-view]').forEach(x=>x.classList.remove('active'));
     const bookBtn = document.querySelector('.navlink[data-view="book"]');
     if(bookBtn) bookBtn.classList.add('active');
     const vb=document.getElementById('view-book'), vg=document.getElementById('view-gallery');
