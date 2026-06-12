@@ -576,7 +576,7 @@ const STATUS_LABELS = {
 function adminFormHtml(b){
   // b = eksisterende booking (endre) eller null (ny)
   const v = b || { office:'a', mode:'day', date:'', endDate:'', months:1,
-    name:'', company:'', orgno:'', email:'', phone:'', pay:'invoice', msg:'', status:'confirmed' };
+    name:'', company:'', orgno:'', email:'', phone:'', pay:'none', msg:'', status:'confirmed' };
   const opt = (val,txt,cur)=>`<option value="${val}"${cur===val?' selected':''}>${txt}</option>`;
   return `<div class="panel" style="padding:16px; margin-bottom:16px; background:#fff; border:1px solid var(--line); border-radius:12px;">
     <div class="section-label">${b?'Endre booking':'Ny booking'}</div>
@@ -593,7 +593,7 @@ function adminFormHtml(b){
     <div class="field"><label>E-post</label><input id="af-email" type="email" value="${(v.email||'').replace(/"/g,'&quot;')}"></div>
     <div class="field"><label>Telefon</label><input id="af-phone" value="${(v.phone||'').replace(/"/g,'&quot;')}"></div>
     <div class="field"><label>Betalingsmåte</label><select id="af-pay">
-      ${opt('invoice','Faktura',v.pay)}${opt('card','Kort',v.pay)}${opt('vipps','Vipps',v.pay)}</select></div>
+      ${opt('none','Uten betaling',v.pay)}${opt('card','Kort',v.pay)}${opt('vipps','Vipps',v.pay)}</select></div>
     <div class="field"><label>Status</label><select id="af-status">
       ${Object.entries(STATUS_LABELS).map(([k,t])=>opt(k,t,v.status)).join('')}</select></div>
     <div class="field"><label>Melding</label><input id="af-msg" value="${(v.msg||'').replace(/"/g,'&quot;')}"></div>
