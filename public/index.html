@@ -432,6 +432,8 @@
           <button class="btn" id="admin-login-btn" style="margin-top:10px;">Logg inn</button>
         </div>
         <div id="admin-content" style="display:none;">
+          <button class="btn" id="admin-new-btn" style="margin-bottom:14px;">+ Ny booking</button>
+          <div id="admin-form-wrap" style="display:none;"></div>
           <div id="mybookings"><div class="loading">Laster …</div></div>
           <button class="bk-del" id="admin-logout" style="margin-top:12px;">Logg ut</button>
         </div>
@@ -558,11 +560,97 @@ async function saveBooking(b){
 }
 
 async function deleteBooking(id){
+  if(!confirm('Avbestille denne bookingen?')) return;
   try { await api('/api/bookings/'+encodeURIComponent(id), { method:'DELETE', headers:{ 'x-admin-password': adminPass } }); }
   catch(e){ toast('Kunne ikke avbestille bookingen.'); return; }
-  adminBookings = adminBookings.filter(b=>b.id!==id);
-  renderMyBookings();
+  await adminLoadBookings();
   loadBookings(); // oppdater kalenderen
+}
+
+// ---------- Admin: opprett / endre booking ----------
+const STATUS_LABELS = {
+  confirmed:'Bekreftet', pending_payment:'Venter betaling',
+  pending_invoice:'Venter faktura', cancelled:'Avbestilt', expired:'Utløpt'
+};
+
+function adminFormHtml(b){
+  // b = eksisterende booking (endre) eller null (ny)
+  const v = b || { office:'a', mode:'day', date:'', endDate:'', months:1,
+    name:'', company:'', orgno:'', email:'', phone:'', pay:'invoice', msg:'', status:'confirmed' };
+  const opt = (val,txt,cur)=>`<option value="${val}"${cur===val?' selected':''}>${txt}</option>`;
+  return `<div class="panel" style="padding:16px; margin-bottom:16px; background:#fff; border:1px solid var(--line); border-radius:12px;">
+    <div class="section-label">${b?'Endre booking':'Ny booking'}</div>
+    <div class="field"><label>Kontor</label><select id="af-office">
+      ${OFFICES.map(o=>opt(o.id,o.room,v.office)).join('')}</select></div>
+    <div class="field"><label>Type</label><select id="af-mode">
+      ${MODES.map(m=>opt(m.id,m.ttl,v.mode)).join('')}</select></div>
+    <div class="field"><label>Startdato</label><input id="af-date" type="date" value="${v.date||''}"></div>
+    <div class="field" id="af-enddate-wrap"><label>Sluttdato (kun for dag)</label><input id="af-enddate" type="date" value="${v.endDate||''}"></div>
+    <div class="field" id="af-months-wrap"><label>Antall måneder</label><input id="af-months" type="number" min="1" max="24" value="${v.months||1}"></div>
+    <div class="field"><label>Navn</label><input id="af-name" value="${(v.name||'').replace(/"/g,'&quot;')}"></div>
+    <div class="field"><label>Firma</label><input id="af-company" value="${(v.company||'').replace(/"/g,'&quot;')}"></div>
+    <div class="field"><label>Org.nr</label><input id="af-orgno" value="${(v.orgno||'').replace(/"/g,'&quot;')}"></div>
+    <div class="field"><label>E-post</label><input id="af-email" type="email" value="${(v.email||'').replace(/"/g,'&quot;')}"></div>
+    <div class="field"><label>Telefon</label><input id="af-phone" value="${(v.phone||'').replace(/"/g,'&quot;')}"></div>
+    <div class="field"><label>Betalingsmåte</label><select id="af-pay">
+      ${opt('invoice','Faktura',v.pay)}${opt('card','Kort',v.pay)}${opt('vipps','Vipps',v.pay)}</select></div>
+    <div class="field"><label>Status</label><select id="af-status">
+      ${Object.entries(STATUS_LABELS).map(([k,t])=>opt(k,t,v.status)).join('')}</select></div>
+    <div class="field"><label>Melding</label><input id="af-msg" value="${(v.msg||'').replace(/"/g,'&quot;')}"></div>
+    <div style="display:flex; gap:8px; margin-top:12px;">
+      <button class="btn" id="af-save">${b?'Lagre endringer':'Opprett booking'}</button>
+      <button class="bk-del" id="af-cancel">Avbryt</button>
+    </div>
+  </div>`;
+}
+
+function syncAdminFormFields(){
+  const mode = $('#af-mode') ? $('#af-mode').value : 'day';
+  if($('#af-enddate-wrap')) $('#af-enddate-wrap').style.display = mode==='day' ? 'block':'none';
+  if($('#af-months-wrap')) $('#af-months-wrap').style.display = mode==='month' ? 'block':'none';
+}
+
+function openAdminForm(b){
+  const wrap = $('#admin-form-wrap');
+  wrap.innerHTML = adminFormHtml(b);
+  wrap.style.display='block';
+  wrap.scrollIntoView({behavior:'smooth', block:'nearest'});
+  $('#af-mode').onchange = syncAdminFormFields;
+  syncAdminFormFields();
+  $('#af-cancel').onclick = ()=>{ wrap.style.display='none'; wrap.innerHTML=''; };
+  $('#af-save').onclick = ()=> saveAdminBooking(b ? b.id : null);
+}
+
+async function saveAdminBooking(id){
+  const mode = $('#af-mode').value;
+  const payload = {
+    officeId: $('#af-office').value,
+    mode,
+    startDate: $('#af-date').value,
+    endDate: mode==='day' ? ($('#af-enddate').value || $('#af-date').value) : null,
+    months: mode==='month' ? Math.max(1, parseInt($('#af-months').value||'1',10)) : 1,
+    customerName: $('#af-name').value.trim(),
+    customerCompany: $('#af-company').value.trim() || null,
+    customerOrgNo: $('#af-orgno').value.trim() || null,
+    customerEmail: $('#af-email').value.trim(),
+    customerPhone: $('#af-phone').value.trim() || null,
+    paymentMethod: $('#af-pay').value,
+    message: $('#af-msg').value.trim() || null,
+    status: $('#af-status').value,
+  };
+  if(!payload.startDate){ toast('Velg en startdato.'); return; }
+  if(payload.customerName.length<2){ toast('Skriv inn navn.'); return; }
+  if(!/.+@.+\..+/.test(payload.customerEmail)){ toast('Skriv inn gyldig e-post.'); return; }
+  const url = id ? '/api/admin/bookings/'+encodeURIComponent(id) : '/api/admin/bookings';
+  const method = id ? 'PUT' : 'POST';
+  try {
+    await api(url, { method, headers:{ 'x-admin-password': adminPass }, body: JSON.stringify(payload) });
+  } catch(e){ toast(e.message || 'Kunne ikke lagre bookingen.'); return; }
+  $('#admin-form-wrap').style.display='none';
+  $('#admin-form-wrap').innerHTML='';
+  await adminLoadBookings();
+  loadBookings();
+  toast(id ? 'Booking endret.' : 'Booking opprettet.');
 }
 
 // ---------- Render: offices ----------
@@ -770,18 +858,27 @@ function renderMyBookings(){
     if(b.mode==='week') when=`${prettyDate(b.date)} – ${prettyDate(b.endDate||b.date)} · 1 uke`;
     if(b.mode==='month') when=`Fra ${prettyDate(b.date)} · ${b.months} mnd`;
     const who = [b.name, b.company].filter(Boolean).join(' · ');
-    return `<div class="bk">
+    const cancelled = (b.status==='cancelled'||b.status==='expired');
+    const statusTxt = STATUS_LABELS[b.status] || b.status;
+    return `<div class="bk"${cancelled?' style="opacity:.6;"':''}>
       <div>
         <div class="bk-room">${b.room.split('—')[0].trim()}</div>
         <div class="bk-meta">${when} · ${fmt(b.total)} kr</div>
         <div class="bk-meta">${who}${b.phone?` · ${b.phone}`:''}</div>
         <div class="bk-meta">${b.email||''}${b.receiptNo?` · KVITT ${b.receiptNo}`:''}</div>
-        <button class="bk-del" data-del="${b.id}">Avbestill</button>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="bk-del" data-edit="${b.id}">Endre</button>
+          ${cancelled?'':`<button class="bk-del" data-del="${b.id}">Avbestill</button>`}
+        </div>
       </div>
-      <span class="bk-status">${b.pay==='vipps'?'Vipps':'Kort'}</span>
+      <span class="bk-status">${statusTxt}</span>
     </div>`;
   }).join('');
   el.querySelectorAll('[data-del]').forEach(btn=>btn.onclick=()=>deleteBooking(btn.dataset.del));
+  el.querySelectorAll('[data-edit]').forEach(btn=>btn.onclick=()=>{
+    const b = adminBookings.find(x=>x.id===btn.dataset.edit);
+    if(b) openAdminForm(b);
+  });
 }
 
 // ---------- Admin login ----------
@@ -801,9 +898,11 @@ $('#admin-login-btn').onclick = async ()=>{
 $('#admin-logout').onclick = ()=>{
   adminPass=null; adminBookings=[];
   $('#admin-pass').value='';
+  if($('#admin-form-wrap')){ $('#admin-form-wrap').style.display='none'; $('#admin-form-wrap').innerHTML=''; }
   $('#admin-content').style.display='none';
   $('#admin-login').style.display='block';
 };
+$('#admin-new-btn').onclick = ()=> openAdminForm(null);
 
 // ---------- Calendar nav ----------
 $('#prevM').onclick=()=>{ viewDate.setMonth(viewDate.getMonth()-1); renderCalendar(); };
