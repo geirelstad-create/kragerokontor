@@ -222,7 +222,6 @@ app.get('/api/admin/bookings', async (req, res) => {
   const { data, error } = await supabase
     .from('bookings')
     .select('*')
-    .in('status', ['pending_payment', 'pending_invoice', 'confirmed'])
     .order('start_date', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
   res.json((data ?? []).map(adminBooking));
@@ -233,6 +232,125 @@ app.delete('/api/bookings/:id', async (req, res) => {
   const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
+});
+
+// ---- Admin: opprett booking manuelt (ingen betaling) ----
+const AdminBookingBody = z.object({
+  officeId: z.enum(['a', 'b', 'c']),
+  mode: z.enum(['day', 'week', 'month']),
+  startDate: z.string().date(),
+  endDate: z.string().date().nullable().optional(),
+  months: z.number().int().min(1).max(24).default(1),
+  customerName: z.string().min(2),
+  customerCompany: z.string().optional().nullable(),
+  customerOrgNo: z.string().optional().nullable(),
+  customerEmail: z.string().email(),
+  customerPhone: z.string().optional().nullable(),
+  paymentMethod: z.enum(['card', 'vipps', 'invoice']).default('invoice'),
+  message: z.string().optional().nullable(),
+  status: z.enum(['pending_payment', 'pending_invoice', 'confirmed', 'cancelled', 'expired']).default('confirmed'),
+});
+
+app.post('/api/admin/bookings', async (req, res) => {
+  if (!adminAuthorized(req)) return res.status(401).json({ error: 'Ikke autorisert' });
+  const parsed = AdminBookingBody.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const b = parsed.data;
+  try {
+    const { office, endDate, qty, label, amountNok } = await computeBooking(b.officeId, b.mode, b.startDate, b.endDate, b.months);
+    if (diffDaysInclusive(b.startDate, endDate) <= 0) return res.status(400).json({ error: 'Ugyldig bookingperiode' });
+
+    // Sjekk ledighet kun for aktive statuser (ikke for kansellerte/utløpte registreringer).
+    if (['pending_payment', 'pending_invoice', 'confirmed'].includes(b.status)) {
+      const available = await assertAvailable(b.officeId, b.mode, b.startDate, endDate);
+      if (!available) return res.status(409).json({ error: 'Kontoret er ikke ledig i valgt periode' });
+    }
+
+    const { data: booking, error } = await supabase
+      .from('bookings')
+      .insert({
+        office_id: b.officeId,
+        room: office.room,
+        mode: b.mode,
+        start_date: b.startDate,
+        end_date: endDate,
+        months: b.mode === 'month' ? b.months : 1,
+        qty,
+        label,
+        amount_nok: amountNok,
+        customer_name: b.customerName,
+        customer_company: b.customerCompany ?? null,
+        customer_orgno: b.customerOrgNo ?? null,
+        customer_email: b.customerEmail,
+        customer_phone: b.customerPhone ?? null,
+        payment_method: b.paymentMethod,
+        message: b.message ?? null,
+        status: b.status,
+        confirmed_at: b.status === 'confirmed' ? new Date().toISOString() : null,
+      })
+      .select('*')
+      .single();
+    if (error || !booking) return res.status(409).json({ error: error?.message ?? 'Kunne ikke opprette booking' });
+    res.json({ ok: true, booking: adminBooking(booking) });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+  }
+});
+
+// ---- Admin: endre booking ----
+app.put('/api/admin/bookings/:id', async (req, res) => {
+  if (!adminAuthorized(req)) return res.status(401).json({ error: 'Ikke autorisert' });
+  const parsed = AdminBookingBody.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const b = parsed.data;
+  const id = req.params.id;
+  try {
+    const { office, endDate, qty, label, amountNok } = await computeBooking(b.officeId, b.mode, b.startDate, b.endDate, b.months);
+    if (diffDaysInclusive(b.startDate, endDate) <= 0) return res.status(400).json({ error: 'Ugyldig bookingperiode' });
+
+    // Ledighetssjekk: ignorer denne bookingen selv, og kun for aktive statuser.
+    if (['pending_payment', 'pending_invoice', 'confirmed'].includes(b.status)) {
+      const { data: others } = await supabase
+        .from('bookings')
+        .select('id,office_id,room,mode,start_date,end_date,months,status')
+        .in('status', ['pending_payment', 'pending_invoice', 'confirmed'])
+        .neq('id', id);
+      const clash = conflicts(
+        { officeId: b.officeId, mode: b.mode, startDate: b.startDate, endDate },
+        (others ?? []) as Booking[]
+      );
+      if (clash) return res.status(409).json({ error: 'Kontoret er ikke ledig i valgt periode' });
+    }
+
+    const { data: booking, error } = await supabase
+      .from('bookings')
+      .update({
+        office_id: b.officeId,
+        room: office.room,
+        mode: b.mode,
+        start_date: b.startDate,
+        end_date: endDate,
+        months: b.mode === 'month' ? b.months : 1,
+        qty,
+        label,
+        amount_nok: amountNok,
+        customer_name: b.customerName,
+        customer_company: b.customerCompany ?? null,
+        customer_orgno: b.customerOrgNo ?? null,
+        customer_email: b.customerEmail,
+        customer_phone: b.customerPhone ?? null,
+        payment_method: b.paymentMethod,
+        message: b.message ?? null,
+        status: b.status,
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error || !booking) return res.status(500).json({ error: error?.message ?? 'Kunne ikke endre booking' });
+    res.json({ ok: true, booking: adminBooking(booking) });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+  }
 });
 
 app.post('/api/create-checkout-session', async (req, res) => {
